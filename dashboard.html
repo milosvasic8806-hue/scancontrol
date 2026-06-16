@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScanControl — Live Dashboard</title>
+<style>
+:root{--bg:#0a0e14;--bg2:#111822;--bg3:#1a2332;--text:#e0e6ed;--text2:#8b95a5;--text3:#5a6577;--green:#00b050;--red:#ff4444;--blue:#4a9eff;--amber:#f59e0b;--border:#1e2a3a;--mono:Consolas,monospace;--accent:#23f0c7}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Calibri,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.header{background:#002045;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--accent)}
+.header h1{font-size:16px;color:var(--accent);letter-spacing:1px}
+.header .status{font-size:11px;color:var(--text2)}
+.container{max-width:900px;margin:0 auto;padding:12px}
+.setup{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px;text-align:center}
+.setup input{width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono);margin:12px 0}
+.setup button{padding:10px 24px;background:var(--accent);color:#002045;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px}
+.card h3{font-size:13px;color:var(--accent);margin-bottom:10px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px}
+.kpi{background:var(--bg3);border-radius:8px;padding:10px;text-align:center}
+.kpi .num{font-size:24px;font-weight:700;font-family:var(--mono)}
+.kpi .lbl{font-size:10px;color:var(--text2);margin-top:2px}
+.kpi.green .num{color:var(--green)}.kpi.red .num{color:var(--red)}.kpi.blue .num{color:var(--blue)}.kpi.amber .num{color:var(--amber)}.kpi.accent .num{color:var(--accent)}
+.tbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+.tbl th{background:var(--bg3);padding:6px 4px;text-align:left;color:var(--accent);font-size:10px;border-bottom:1px solid var(--border);position:sticky;top:0}
+.tbl td{padding:5px 4px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px}
+.tbl tr:hover td{background:rgba(35,240,199,.05)}
+.tbl tr.box-row{cursor:pointer;background:var(--bg3)}
+.tbl tr.box-row:hover{background:rgba(35,240,199,.08)}
+.tbl tr.part-row{font-size:10px}
+.tbl tr.part-row td{padding:3px 4px;color:var(--text2)}
+.ok{color:var(--green)}.nok{color:var(--red)}.warn{color:var(--amber)}
+.pill{display:inline-block;padding:1px 6px;border-radius:10px;font-size:9px;font-weight:700}
+.pill-ret{background:rgba(74,158,255,.15);color:var(--blue)}
+.pill-cart{background:rgba(245,158,11,.15);color:var(--amber)}
+.sn{color:var(--blue);font-size:9px}
+.refresh-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px}
+.refresh-bar button{padding:5px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:11px}
+.auto-badge{display:inline-block;padding:2px 6px;background:rgba(35,240,199,.1);color:var(--accent);border-radius:10px;font-size:9px}
+.empty{text-align:center;padding:40px;color:var(--text3)}
+.live-dot{display:inline-block;width:8px;height:8px;background:var(--green);border-radius:50%;margin-right:4px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.search{padding:6px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;font-family:var(--mono);width:200px}
+.tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+.tab{padding:6px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;color:var(--text2)}
+.tab.active{background:rgba(35,240,199,.15);border-color:var(--accent);color:var(--accent);font-weight:700}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>☁️ ScanControl Dashboard</h1>
+  <div class="status" id="statusBar">Connecting...</div>
+</div>
+<div class="container" id="app">
+  <div class="setup" id="setupPanel">
+    <p style="font-size:16px;margin-bottom:8px">☁️ Cloud Dashboard</p>
+    <p style="color:var(--text2);font-size:13px">Paste your Firebase URL:</p>
+    <input id="fbUrlInput" type="text" placeholder="https://scancontrol-xxxxx-default-rtdb.europe-west1.firebasedatabase.app">
+    <br><button onclick="connectFirebase()">Connect</button>
+  </div>
+  <div id="dashboard" style="display:none"></div>
+</div>
+
+<script>
+let FB_URL="";
+const FB_DEFAULT="https://project-e0159900-4be4-446b-8d1-default-rtdb.europe-west1.firebasedatabase.app";
+let DATA={};
+let autoInterval=null;
+let activeTab="vda";
+let expandedBox={};
+let searchQ="";
+
+// Firebase converts arrays to objects — convert back
+function toArr(obj){
+  if(!obj) return [];
+  if(Array.isArray(obj)) return obj.filter(Boolean);
+  if(typeof obj==="object") return Object.values(obj).filter(Boolean);
+  return [];
+}
+
+function init(){
+  const saved=localStorage.getItem("sc_dash_firebase_url")||FB_DEFAULT;
+  FB_URL=saved;
+  document.getElementById("fbUrlInput").value=FB_URL;
+  // Auto-connect
+  document.getElementById("setupPanel").style.display="none";
+  document.getElementById("dashboard").style.display="block";
+  loadData();
+  autoInterval=setInterval(loadData,30000);
+}
+
+function connectFirebase(){
+  const url=document.getElementById("fbUrlInput").value.trim().replace(/\/+$/,"");
+  if(!url||(!url.includes("firebasedatabase.app")&&!url.includes("firebaseio.com"))){alert("Invalid URL!");return;}
+  FB_URL=url;
+  localStorage.setItem("sc_dash_firebase_url",url);
+  document.getElementById("setupPanel").style.display="none";
+  document.getElementById("dashboard").style.display="block";
+  loadData();
+  autoInterval=setInterval(loadData,30000);
+}
+
+async function fbGet(path){
+  try{const r=await fetch(FB_URL+"/scancontrol/"+path+".json");if(!r.ok)return null;return await r.json();}catch(e){return null;}
+}
+
+async function loadData(){
+  document.getElementById("statusBar").innerHTML='<span class="live-dot"></span> Loading...';
+  const today=new Date().toISOString().slice(0,10);
+  const [fullData,stats,activity]=await Promise.all([
+    fbGet("fullData"),
+    fbGet("dailyStats/"+today),
+    fbGet("lastActivity")
+  ]);
+  const yd=new Date();yd.setDate(yd.getDate()-1);
+  const ydStats=await fbGet("dailyStats/"+yd.toISOString().slice(0,10));
+  DATA={fullData:fullData||{},stats:stats||{},activity:activity||{},ydStats:ydStats||{},today};
+  renderDashboard();
+  document.getElementById("statusBar").innerHTML='<span class="live-dot"></span> Live — '+new Date().toLocaleTimeString("sr-RS");
+}
+
+function renderDashboard(){
+  const el=document.getElementById("dashboard");
+  const s=DATA.stats;
+  const fd=DATA.fullData;
+  const act=DATA.activity;
+  const yd=DATA.ydStats;
+  const vdaHistory=toArr(fd.vdaHistory).sort((a,b)=>(b.finishedAt||"").localeCompare(a.finishedAt||""));
+  const ships=toArr(fd.ships).sort((a,b)=>((b.closedAt||b.createdAt)||"").localeCompare((a.closedAt||a.createdAt)||""));
+  const todayVDA=vdaHistory.filter(v=>(v.finishedAt||"").startsWith(DATA.today));
+  const todayShips=ships.filter(sh=>((sh.closedAt||sh.createdAt)||"").startsWith(DATA.today));
+
+  let html='';
+  
+  // Refresh bar
+  html+='<div class="refresh-bar">';
+  html+='<span style="font-size:12px;color:var(--text2)">📅 '+DATA.today+' <span class="auto-badge">Auto 30s</span></span>';
+  html+='<div><button onclick="loadData()">🔄 Refresh</button> ';
+  html+='<button onclick="localStorage.removeItem(\'sc_dash_firebase_url\');location.reload()">⚙️</button></div>';
+  html+='</div>';
+
+  // Last activity
+  if(act.time){
+    html+='<div class="card" style="border-color:var(--accent);padding:8px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">';
+    html+='<span style="color:var(--accent);font-weight:700;font-size:12px">Last:</span>';
+    html+='<span>'+(act.operator||"—")+'</span>';
+    html+='<span>Box: <b>'+(act.vdaBoxCount||0)+'</b></span>';
+    html+='<span class="sn">'+fmtTime(act.time)+'</span>';
+    html+='</div>';
+  }
+
+  // KPI
+  html+='<div class="card"><h3>📊 Today</h3><div class="kpi-grid">';
+  html+=kpi(todayVDA.length,"VDA Boxes","accent",yd.vdaBoxes);
+  html+=kpi(todayVDA.reduce((s,v)=>s+(v.vdaQty||0),0),"Parts","green",yd.vdaPcs);
+  html+=kpi(todayVDA.reduce((s,v)=>s+(v.nokCount||0),0),"NOK","red",yd.vdaNOK);
+  html+=kpi(todayShips.length,"Shipments","blue",yd.shipments);
+  html+=kpi(fd.vdaBoxCount||0,"Box Counter","accent");
+  html+='</div>';
+  const ops=[...new Set(todayVDA.map(v=>v.operator).filter(Boolean))];
+  if(ops.length) html+='<p style="margin-top:8px;color:var(--text2);font-size:11px">👥 '+ops.join(", ")+'</p>';
+  html+='</div>';
+
+  // Tabs
+  html+='<div class="tabs">';
+  html+='<div class="tab '+(activeTab==="vda"?"active":"")+'" onclick="activeTab=\'vda\';renderDashboard()">✅ VDA ('+vdaHistory.length+')</div>';
+  html+='<div class="tab '+(activeTab==="ships"?"active":"")+'" onclick="activeTab=\'ships\';renderDashboard()">🚛 Shipments ('+ships.length+')</div>';
+  html+='<div class="tab '+(activeTab==="today"?"active":"")+'" onclick="activeTab=\'today\';renderDashboard()">📅 Today ('+todayVDA.length+')</div>';
+  html+='</div>';
+
+  // Search
+  html+='<div style="margin-bottom:10px"><input class="search" placeholder="🔍 Search serial, PN..." value="'+searchQ+'" oninput="searchQ=this.value.toUpperCase();renderDashboard()"></div>';
+
+  if(activeTab==="vda"||activeTab==="today"){
+    const list=activeTab==="today"?todayVDA:vdaHistory;
+    const filtered=searchQ.length>=3?list.filter(v=>vdaMatch(v,searchQ)):list;
+    html+='<div class="card"><h3>✅ VDA Check — '+(activeTab==="today"?"Today":"All")+ ' ('+filtered.length+' boxes)</h3>';
+    if(filtered.length){
+      html+='<div style="max-height:70vh;overflow-y:auto">';
+      html+='<table class="tbl"><tr><th>Box</th><th>PKG</th><th>PN</th><th>Qty</th><th>OK</th><th>NOK</th><th>Operator</th><th>Time</th></tr>';
+      filtered.forEach(v=>{
+        const isExp=expandedBox[v.boxNum+"_"+v.startedAt];
+        const pkg=v.pkg==="Carton"?'<span class="pill pill-cart">Cart</span>':'<span class="pill pill-ret">Ret</span>';
+        const status=v.nokCount>0?'<span class="nok">'+v.nokCount+'</span>':'<span class="ok">0</span>';
+        const alerts=toArr(v.alerts).length;
+        html+='<tr class="box-row" onclick="toggleBox(\''+v.boxNum+"_"+v.startedAt+'\')">';
+        html+='<td><b>'+(isExp?'▼':'▶')+' '+(v.boxNum||"—")+'</b></td>';
+        html+='<td>'+pkg+'</td>';
+        html+='<td>'+(v.vdaPN||"—")+'</td>';
+        html+='<td><b>'+(v.vdaQty||0)+'</b></td>';
+        html+='<td class="ok">'+(v.okCount||0)+'</td>';
+        html+='<td>'+status+'</td>';
+        html+='<td>'+(v.operator||"—")+'</td>';
+        html+='<td class="sn">'+fmtTime(v.finishedAt)+'</td>';
+        html+='</tr>';
+        // Expanded: show VDA labels + scanned parts
+        if(isExp){
+          // VDA Labels
+          if(v.vdaLabels&&toArr(v.vdaLabels).length){
+            html+='<tr><td colspan="8" style="background:var(--bg);padding:6px 8px">';
+            html+='<b style="color:var(--accent);font-size:10px">VDA Labels:</b><br>';
+            toArr(v.vdaLabels).forEach((lb,i)=>{
+              html+='<span style="margin-right:12px;font-size:10px">#'+(i+1)+': <span class="sn">'+(lb.sn||"—")+'</span> '+(lb.pn||"")+ ' ×'+(lb.qty||0)+'</span>';
+            });
+            html+='</td></tr>';
+          }
+          // Scanned parts
+          if(v.scanned&&toArr(v.scanned).length){
+            html+='<tr><td colspan="8" style="background:var(--bg);padding:0">';
+            html+='<table class="tbl" style="margin:0"><tr><th>#</th><th>Scanned PN</th><th>VDA Serial</th><th>Comm Date</th><th>Prod Date</th><th>Prod Time</th><th>Scan Time</th><th>Match</th></tr>';
+            toArr(v.scanned).forEach((s,si)=>{
+              const matchCls=!s.match?"nok":(s.alerts&&s.alerts.length)?"warn":"ok";
+              const highlight=searchQ.length>=3&&((s.sn||"").toUpperCase().includes(searchQ)||(s.pn||"").toUpperCase().includes(searchQ))?' style="background:rgba(245,158,11,.12)"':"";
+              html+='<tr class="part-row"'+highlight+'>';
+              html+='<td>'+(si+1)+'/'+(toArr(v.scanned).length)+'</td>';
+              html+='<td class="'+matchCls+'">'+(s.pn||"—")+'</td>';
+              html+='<td class="sn">'+(s.sn||"—")+'</td>';
+              const cd=s.sn&&DATA.fullData.commDates?DATA.fullData.commDates[s.sn]||"—":"—";
+              html+='<td>'+cd+'</td>';
+              html+='<td>'+(s.prodDate||"—")+'</td>';
+              html+='<td>'+(s.prodTime||"—")+'</td>';
+              html+='<td>'+fmtTime(s.ts)+'</td>';
+              html+='<td class="'+matchCls+'">'+(s.match?"OK":"NOK")+'</td>';
+              html+='</tr>';
+            });
+            html+='</table></td></tr>';
+          }
+        }
+      });
+      html+='</table></div>';
+    }else{
+      html+='<div class="empty">No data'+(searchQ?' matching "'+searchQ+'"':'')+'</div>';
+    }
+    html+='</div>';
+  }
+
+  if(activeTab==="ships"){
+    const filtered=searchQ.length>=3?ships.filter(sh=>shipMatch(sh,searchQ)):ships;
+    html+='<div class="card"><h3>🚛 Shipments ('+filtered.length+')</h3>';
+    if(filtered.length){
+      html+='<div style="max-height:70vh;overflow-y:auto">';
+      html+='<table class="tbl"><tr><th>Vehicle</th><th>Boxes</th><th>Labels</th><th>ASNs</th><th>Created</th><th>Closed</th></tr>';
+      filtered.forEach(sh=>{
+        const isExp=expandedBox["ship_"+(sh.createdAt||"")];
+        const labels=sh.boxes?toArr(sh.boxes).reduce((s,b)=>s+toArr(b.items).length,0):0;
+        html+='<tr class="box-row" onclick="toggleBox(\'ship_'+(sh.createdAt||"")+'\')">';
+        html+='<td><b>'+(isExp?'▼':'▶')+' '+(sh.vehicleNumber||"—")+'</b></td>';
+        html+='<td><b>'+(sh.boxes?toArr(sh.boxes).length:0)+'</b></td>';
+        html+='<td><b>'+labels+'</b></td>';
+        html+='<td style="font-size:9px">'+(sh.asns?toArr(sh.asns).join(", "):"—")+'</td>';
+        html+='<td class="sn">'+fmtDate(sh.createdAt)+'</td>';
+        html+='<td class="sn">'+fmtDate(sh.closedAt)+'</td>';
+        html+='</tr>';
+        if(isExp&&sh.boxes){const sBoxes=toArr(sh.boxes);
+          sBoxes.forEach((box,bi)=>{
+            html+='<tr class="part-row"><td colspan="6" style="background:var(--bg);padding:4px 8px">';
+            html+='<b>Box '+(bi+1)+'</b> — '+(box.pkg||"?")+ ' — '+toArr(box.items).length+' pcs: ';
+            toArr(box.items).forEach(it=>{
+              html+='<span style="margin-right:6px" class="sn">'+(it.serial||it.sn||"?")+'</span>';
+            });
+            html+='</td></tr>';
+          });
+        }
+      });
+      html+='</table></div>';
+    }else{
+      html+='<div class="empty">No shipments</div>';
+    }
+    html+='</div>';
+  }
+
+  html+='<p style="text-align:center;color:var(--text3);font-size:9px;margin-top:16px;padding-bottom:16px">T.A.S. FORCE | ScanControl Cloud v2</p>';
+  el.innerHTML=html;
+  // Refocus search
+  const si=el.querySelector('.search');
+  if(si&&searchQ){si.focus();si.setSelectionRange(searchQ.length,searchQ.length);}
+}
+
+function toggleBox(key){expandedBox[key]=!expandedBox[key];renderDashboard();}
+
+function vdaMatch(v,q){
+  if((v.vdaPN||"").toUpperCase().includes(q)) return true;
+  if((v.operator||"").toUpperCase().includes(q)) return true;
+  if((v.vdaSN||"").toUpperCase().includes(q)) return true;
+  if(String(v.boxNum||"").includes(q)) return true;
+  return toArr(v.scanned).some(s=>(s.sn||"").toUpperCase().includes(q)||(s.pn||"").toUpperCase().includes(q));
+}
+function shipMatch(sh,q){
+  if((sh.vehicleNumber||"").toUpperCase().includes(q)) return true;
+  return toArr(sh.boxes).some(b=>toArr(b.items).some(it=>((it.serial||it.sn||"")+"").toUpperCase().includes(q)));
+}
+
+function kpi(val,label,cls,compare){
+  let d="";
+  if(compare!==undefined&&compare!==null){const diff=val-(compare||0);if(diff>0)d='<span style="color:var(--green);font-size:9px"> ▲'+diff+'</span>';else if(diff<0)d='<span style="color:var(--red);font-size:9px"> ▼'+Math.abs(diff)+'</span>';}
+  return '<div class="kpi '+cls+'"><div class="num">'+val+d+'</div><div class="lbl">'+label+'</div></div>';
+}
+function fmtTime(ts){if(!ts)return"—";const t=ts.split(" ")[1]||ts.split("T")[1]||"";return t.slice(0,8)||ts.slice(11,19)||ts;}
+function fmtDate(ts){if(!ts)return"—";return ts.slice(0,16).replace("T"," ");}
+
+init();
+</script>
+</body>
+</html>
