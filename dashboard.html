@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScanControl — Live Dashboard</title>
+<style>
+:root{--bg:#0a0e14;--bg2:#111822;--bg3:#1a2332;--text:#e0e6ed;--text2:#8b95a5;--text3:#5a6577;--green:#00b050;--red:#ff4444;--blue:#4a9eff;--amber:#f59e0b;--border:#1e2a3a;--mono:Consolas,monospace;--accent:#23f0c7}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Calibri,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.header{background:#002045;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--accent)}
+.header h1{font-size:18px;color:var(--accent);letter-spacing:1px}
+.header .status{font-size:12px;color:var(--text2)}
+.container{max-width:800px;margin:0 auto;padding:16px}
+.setup{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px;text-align:center}
+.setup input{width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono);margin:12px 0}
+.setup button{padding:10px 24px;background:var(--accent);color:#002045;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+.card h3{font-size:14px;color:var(--accent);margin-bottom:12px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.kpi{background:var(--bg3);border-radius:8px;padding:12px;text-align:center}
+.kpi .num{font-size:28px;font-weight:700;font-family:var(--mono)}
+.kpi .lbl{font-size:11px;color:var(--text2);margin-top:4px}
+.kpi.green .num{color:var(--green)}
+.kpi.red .num{color:var(--red)}
+.kpi.blue .num{color:var(--blue)}
+.kpi.amber .num{color:var(--amber)}
+.kpi.accent .num{color:var(--accent)}
+.tbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.tbl th{background:var(--bg3);padding:8px 6px;text-align:left;color:var(--accent);font-size:11px;border-bottom:1px solid var(--border)}
+.tbl td{padding:6px;border-bottom:1px solid var(--border)}
+.tbl tr:hover td{background:rgba(35,240,199,.05)}
+.ok{color:var(--green)}.nok{color:var(--red)}.alert{color:var(--amber)}
+.ts{color:var(--text3);font-size:10px;font-family:var(--mono)}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.pill-ret{background:rgba(74,158,255,.15);color:var(--blue)}
+.pill-cart{background:rgba(245,158,11,.15);color:var(--amber)}
+.refresh-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.refresh-bar button{padding:6px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px}
+.refresh-bar button:active{background:var(--accent);color:#002045}
+.auto-badge{display:inline-block;padding:2px 8px;background:rgba(35,240,199,.1);color:var(--accent);border-radius:10px;font-size:10px}
+.empty{text-align:center;padding:40px;color:var(--text3)}
+.live-dot{display:inline-block;width:8px;height:8px;background:var(--green);border-radius:50%;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>☁️ ScanControl Dashboard</h1>
+  <div class="status" id="statusBar">Connecting...</div>
+</div>
+<div class="container" id="app">
+  <div class="setup" id="setupPanel">
+    <p style="font-size:16px;margin-bottom:8px">☁️ Cloud Dashboard</p>
+    <p style="color:var(--text2);font-size:13px">Paste your Firebase Realtime Database URL to connect:</p>
+    <input id="fbUrlInput" type="text" placeholder="https://scancontrol-xxxxx-default-rtdb.europe-west1.firebasedatabase.app">
+    <br>
+    <button onclick="connectFirebase()">Connect</button>
+  </div>
+  <div id="dashboard" style="display:none"></div>
+</div>
+
+<script>
+let FB_URL="";
+let DATA={};
+let autoRefreshInterval=null;
+
+function init(){
+  const saved=localStorage.getItem("sc_dash_firebase_url");
+  if(saved){
+    document.getElementById("fbUrlInput").value=saved;
+    FB_URL=saved;
+    document.getElementById("setupPanel").style.display="none";
+    document.getElementById("dashboard").style.display="block";
+    loadData();
+    startAutoRefresh();
+  }
+}
+
+function connectFirebase(){
+  const url=document.getElementById("fbUrlInput").value.trim().replace(/\/+$/,"");
+  if(!url||(!url.includes("firebasedatabase.app")&&!url.includes("firebaseio.com"))){
+    alert("Invalid Firebase URL!");return;
+  }
+  FB_URL=url;
+  localStorage.setItem("sc_dash_firebase_url",url);
+  document.getElementById("setupPanel").style.display="none";
+  document.getElementById("dashboard").style.display="block";
+  loadData();
+  startAutoRefresh();
+}
+
+async function fbGet(path){
+  try{
+    const r=await fetch(FB_URL+"/scancontrol/"+path+".json");
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){console.warn("Fetch error:",e);return null;}
+}
+
+async function loadData(){
+  document.getElementById("statusBar").innerHTML='<span class="live-dot"></span> Loading...';
+  const today=new Date().toISOString().slice(0,10);
+  const [stats,boxes,ships,activity]=await Promise.all([
+    fbGet("dailyStats/"+today),
+    fbGet("vdaBoxes/"+today),
+    fbGet("shipments/"+today),
+    fbGet("lastActivity")
+  ]);
+  // Also load yesterday for comparison
+  const yd=new Date();yd.setDate(yd.getDate()-1);
+  const ydStr=yd.toISOString().slice(0,10);
+  const ydStats=await fbGet("dailyStats/"+ydStr);
+  
+  DATA={stats,boxes,ships,activity,ydStats,today};
+  renderDashboard();
+  document.getElementById("statusBar").innerHTML='<span class="live-dot"></span> Live — '+new Date().toLocaleTimeString("sr-RS");
+}
+
+function startAutoRefresh(){
+  if(autoRefreshInterval) clearInterval(autoRefreshInterval);
+  autoRefreshInterval=setInterval(loadData,30000); // every 30s
+}
+
+function renderDashboard(){
+  const el=document.getElementById("dashboard");
+  const s=DATA.stats||{};
+  const boxes=DATA.boxes||{};
+  const ships=DATA.ships||{};
+  const act=DATA.activity||{};
+  const yd=DATA.ydStats||{};
+  
+  const boxList=Object.values(boxes).sort((a,b)=>(b.time||"").localeCompare(a.time||""));
+  const shipList=Object.values(ships).sort((a,b)=>(b.closedAt||"").localeCompare(a.closedAt||""));
+  
+  let html='';
+  
+  // Refresh bar
+  html+='<div class="refresh-bar">';
+  html+='<span style="font-size:13px;color:var(--text2)">📅 '+DATA.today+'</span>';
+  html+='<div><span class="auto-badge">Auto-refresh 30s</span> ';
+  html+='<button onclick="loadData()">🔄 Refresh</button> ';
+  html+='<button onclick="localStorage.removeItem(\'sc_dash_firebase_url\');location.reload()">⚙️ Settings</button></div>';
+  html+='</div>';
+  
+  // Last activity
+  if(act.time){
+    html+='<div class="card" style="border-color:var(--accent);padding:10px 16px">';
+    html+='<span style="color:var(--accent);font-weight:700">Last activity:</span> ';
+    html+='<span style="color:var(--text2)">'+(act.operator||"—")+'</span> — ';
+    html+='<span>Box counter: <b>'+(act.vdaBoxCount||0)+'</b></span> ';
+    html+='<span class="ts">'+fTime(act.time)+'</span>';
+    html+='</div>';
+  }
+  
+  // KPI Cards
+  html+='<div class="card"><h3>📊 Today\'s Summary</h3>';
+  html+='<div class="kpi-grid">';
+  html+=kpi(s.vdaBoxes||0,"VDA Boxes","accent",yd.vdaBoxes);
+  html+=kpi(s.vdaPcs||0,"Parts Checked","green",yd.vdaPcs);
+  html+=kpi(s.vdaNOK||0,"Mismatches","red",yd.vdaNOK);
+  html+=kpi(s.shipments||0,"Shipments","blue",yd.shipments);
+  html+=kpi(s.shippedLabels||0,"Labels Shipped","amber",yd.shippedLabels);
+  html+=kpi(s.vdaBoxCount||0,"Box Counter","accent");
+  html+='</div>';
+  
+  // Operators
+  if(s.operators&&s.operators.length){
+    html+='<p style="margin-top:10px;color:var(--text2);font-size:12px">👥 Operators: <b style="color:var(--text)">'+s.operators.join(", ")+'</b></p>';
+  }
+  
+  // Active shipment
+  if(s.activeShipment){
+    const a=s.activeShipment;
+    html+='<div style="margin-top:10px;padding:8px 12px;background:rgba(245,158,11,.1);border-radius:6px;border:1px solid var(--amber)">';
+    html+='<span style="color:var(--amber);font-weight:700">🚛 Active Shipment</span> ';
+    html+='<span style="color:var(--text)">'+(a.vehicle||"—")+'</span> — ';
+    html+='<b>'+a.boxes+'</b> boxes, <b>'+a.labels+'</b> labels';
+    html+='</div>';
+  }
+  html+='</div>';
+  
+  // VDA Box Detail
+  if(boxList.length){
+    html+='<div class="card"><h3>✅ VDA Boxes Today ('+boxList.length+')</h3>';
+    html+='<table class="tbl"><tr><th>Box</th><th>PKG</th><th>PN</th><th>Qty</th><th>Status</th><th>Operator</th><th>Time</th></tr>';
+    boxList.forEach(b=>{
+      const status=b.nok>0?'<span class="nok">NOK ('+b.nok+')</span>':b.alerts>0?'<span class="alert">OK ⚠</span>':'<span class="ok">OK ✓</span>';
+      const pkg=b.pkg==="Carton"?'<span class="pill pill-cart">Cart</span>':'<span class="pill pill-ret">Ret</span>';
+      html+='<tr><td><b>'+b.boxNum+'</b></td><td>'+pkg+'</td><td style="font-family:var(--mono);font-size:11px">'+(b.pn||"—")+'</td>';
+      html+='<td><b>'+b.qty+'</b></td><td>'+status+'</td><td>'+(b.operator||"—")+'</td>';
+      html+='<td class="ts">'+fTime(b.time)+'</td></tr>';
+    });
+    html+='</table></div>';
+  }
+  
+  // Shipments
+  if(shipList.length){
+    html+='<div class="card"><h3>🚛 Shipments Today ('+shipList.length+')</h3>';
+    html+='<table class="tbl"><tr><th>Vehicle</th><th>Plate</th><th>Boxes</th><th>Labels</th><th>Green</th><th>Blue</th><th>Closed</th></tr>';
+    shipList.forEach(s=>{
+      html+='<tr><td><b>'+(s.vehicle||"—")+'</b></td><td>'+(s.plate||"—")+'</td>';
+      html+='<td><b>'+s.boxes+'</b></td><td><b>'+s.labels+'</b></td>';
+      html+='<td class="ok">'+(s.greenBoxes||0)+'</td><td style="color:var(--blue)">'+(s.blueBoxes||0)+'</td>';
+      html+='<td class="ts">'+fTime(s.closedAt)+'</td></tr>';
+    });
+    html+='</table></div>';
+  }
+  
+  if(!boxList.length&&!shipList.length&&!s.vdaBoxes){
+    html+='<div class="empty"><p style="font-size:48px;margin-bottom:16px">☁️</p>';
+    html+='<p>No data for today yet.</p>';
+    html+='<p style="font-size:12px;margin-top:8px">Data appears when VDA boxes are completed or shipments are closed in ScanControl.</p></div>';
+  }
+  
+  // Yesterday comparison
+  if(DATA.ydStats&&DATA.ydStats.vdaBoxes){
+    html+='<div class="card" style="opacity:.7"><h3>📅 Yesterday</h3>';
+    html+='<div class="kpi-grid">';
+    html+=kpi(yd.vdaBoxes||0,"VDA Boxes","accent");
+    html+=kpi(yd.vdaPcs||0,"Parts","green");
+    html+=kpi(yd.shipments||0,"Shipments","blue");
+    html+=kpi(yd.shippedLabels||0,"Labels","amber");
+    html+='</div></div>';
+  }
+  
+  html+='<p style="text-align:center;color:var(--text3);font-size:10px;margin-top:20px;padding-bottom:20px">T.A.S. FORCE | ScanControl Cloud Dashboard</p>';
+  
+  el.innerHTML=html;
+}
+
+function kpi(val,label,cls,compare){
+  let delta="";
+  if(compare!==undefined&&compare!==null){
+    const diff=val-(compare||0);
+    if(diff>0) delta='<span style="color:var(--green);font-size:10px"> ▲'+diff+'</span>';
+    else if(diff<0) delta='<span style="color:var(--red);font-size:10px"> ▼'+Math.abs(diff)+'</span>';
+  }
+  return '<div class="kpi '+cls+'"><div class="num">'+val+delta+'</div><div class="lbl">'+label+'</div></div>';
+}
+
+function fTime(ts){
+  if(!ts) return "—";
+  const t=ts.split(" ")[1]||ts.split("T")[1]||"";
+  return t.slice(0,8)||ts.slice(11,19)||ts;
+}
+
+init();
+</script>
+</body>
+</html>
